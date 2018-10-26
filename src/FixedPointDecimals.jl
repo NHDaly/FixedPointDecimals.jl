@@ -458,21 +458,31 @@ end
 
 The highest value of `x` which does not result in an overflow when evaluating `T(10)^x`. For
 types of `T` that do not overflow -1 will be returned.
+
+To specify that a custom type doesn't overflow, define
+`int_type_doesnt_overflow(::Type{MyType}) = true`.
 """
-function max_exp10 end
+max_exp10(::Type{T}) where {T<:Integer} = max_exp10(Val(int_type_doesnt_overflow(T)), T)
 
-abstract type IsBitIntegerType end
-struct BitIntegerType <: IsBitIntegerType end
-struct NonBitIntegerType <: IsBitIntegerType end
+"""
+    int_type_doesnt_overflow(::Type{T}) = false
 
-is_bit_integer_type(::Type) = NonBitIntegerType()
-is_bit_integer_type(::Type{T}) where {T <: BitInteger} = BitIntegerType()
+Type trait for T specifying whether it can overflow.
 
-# max_exp10 only works for BitIntegerTypes
-max_exp10(::Type{T}) where {T} = max_exp10(is_bit_integer_type(T), T)
-max_exp10(::NonBitIntegerType, ::Type) = -1
+Integer types used in FixedDecimal are assumed to have overflow, and therefore must define
+`typemax`, `widen`, and `one`. If a type cannot overflow (like `BigInt`), it should add an
+override to this function: `int_type_doesnt_overflow(::Type{MyType}) = true`.
+"""
+function int_type_doesnt_overflow end
+# Unspecified integer types are assumed to overflow:
+int_type_doesnt_overflow(::Type{<:Integer}) = false
+# Define this as true for the builtin fixed-size int types:
+int_type_doesnt_overflow(::Type{BigInt}) = true
 
-function max_exp10(::BitIntegerType, ::Type{T}) where {T}
+# There is no maximum representable value for non-overflowing integer types
+max_exp10(::Val{true}, ::Type) = -1
+# For integer types that could overflow, calculate the maximum representable power of 10:
+function max_exp10(::Val{false}, ::Type{T}) where {T<:Integer}
     W = widen(T)
     type_max = W(typemax(T))
 
