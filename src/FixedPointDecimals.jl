@@ -94,18 +94,12 @@ struct FixedDecimal{T <: Integer, f} <: Real
         if f >= 0 && (n < 0 || f <= n)
             new{T, f}(i % T)
         else
-            # Note: introducing a function barrier to improve performance
-            # https://github.com/JuliaMath/FixedPointDecimals.jl/pull/30
-            _throw_storage_error(f, T, n)
+            throw(ArgumentError(
+            "Requested number of decimal places $f exceeds the max allowed for the " *
+            "storage type $T: [0, $n]"
+            ))
         end
     end
-end
-
-@noinline function _throw_storage_error(f, T, n)
-    throw(ArgumentError(
-        "Requested number of decimal places $f exceeds the max allowed for the " *
-        "storage type $T: [0, $n]"
-    ))
 end
 
 const FD = FixedDecimal
