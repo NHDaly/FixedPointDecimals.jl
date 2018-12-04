@@ -467,7 +467,7 @@ end
 The highest value of `x` which does not result in an overflow when evaluating `T(10)^x`. For
 types of `T` that do not overflow -1 will be returned.
 """
-function max_exp10(::Type{T}) where {T <: Integer}
+Base.@pure function max_exp10(::Type{T}) where {T <: Integer}
     W = widen(T)
     type_max = W(typemax(T))
 
@@ -484,7 +484,7 @@ function max_exp10(::Type{T}) where {T <: Integer}
 end
 
 max_exp10(::Type{BigInt}) = -1
-@eval max_exp10(::Type{Int128}) = $(max_exp10(Int128))  # Freeze this, since it's not getting Const folded.
+#@eval max_exp10(::Type{Int128}) = $(max_exp10(Int128))  # Freeze this, since it's not getting Const folded.
 
 """
     coefficient(::Type{FD{T, f}}) -> T
