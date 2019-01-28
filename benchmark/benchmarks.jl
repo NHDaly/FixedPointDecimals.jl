@@ -14,31 +14,15 @@ using BenchmarkTools
 # Define a parent BenchmarkGroup to contain our suite
 const SUITE = BenchmarkGroup()
 
-decimal_precision = 2
-
-# Express that data through the various types. Round it for integers.
-fd_FixedPointDecimal_types = [
-    FixedPointDecimals.FixedDecimal{Int32, decimal_precision},
-    FixedPointDecimals.FixedDecimal{Int64, decimal_precision},
-    FixedPointDecimals.FixedDecimal{Int128, decimal_precision},
+benchtypes = [
+    FixedPointDecimals.FixedDecimal{Int32,  2},
+    FixedPointDecimals.FixedDecimal{Int64,  2},
+    FixedPointDecimals.FixedDecimal{Int128, 2},
 ]
-inttypes = [Int32,Int64,Int128]
-floattypes = [Float32,Float64]
-#bigtypes = [BigInt, BigFloat]
-
-alltypes = (inttypes..., floattypes..., fd_FixedPointDecimal_types...,)
 
 identity1(a,_) = a
 allops = (*, /, +, ÷, identity1)
 
-# Category for the results output CSV
-category(::Type{<:Union{inttypes...}}) = "Int"
-category(::Type{<:Union{floattypes...}}) = "Float"
-#category(::Type{<:Union{bigtypes...}}) = "Big"
-category(::Type{<:FixedPointDecimals.FixedDecimal}) = "FixedDecimal"
-type(T::Type) = "$T"
-type(T::Type{<:Union{Int32, Int64}}) = "  $T"
-type(T::Type{Int128}) = " $T"
 type(::Type{FixedPointDecimals.FixedDecimal{T,f}}) where {T,f} = "FD{$T,$f}"
 type(::Type{FixedPointDecimals.FixedDecimal{T,f}}) where {T<:Union{Int32,Int64},f} = "FD{ $T,$f}"
 opname(f) = string(Symbol(f))
@@ -52,7 +36,7 @@ end
 for op in allops
     println()
     println("$op")
-    for T in alltypes
+    for T in benchtypes
         print("$T ")
 
         initial_value = zero(T)
