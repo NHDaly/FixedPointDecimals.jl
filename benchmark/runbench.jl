@@ -5,7 +5,7 @@ using Pkg
 Pkg.activate(@__DIR__)
 using PkgBenchmark, BenchmarkTools, Statistics
 
-const N = 1_000
+const N = 100_000_000
 
 import Base: -, /
 function -(a::BenchmarkTools.TrialEstimate, b::BenchmarkTools.TrialEstimate)
