@@ -66,7 +66,7 @@ which can be seen by running e.g. `@code_native div100(5)`.
 REQUIRES:
   - `C` _must be_ greater than `0`
 """
-function div_by_const(x::T, ::Val{C}) where {T, C}
+@inline function div_by_const(x::T, ::Val{C}) where {T, C}
     # These checks will be compiled away during specialization.
     # While for `*(FixedDecimal, FixedDecimal)`, C will always be a power of 10, these checks
     # allow this function to work for any `C > 0`.
@@ -78,26 +78,26 @@ function div_by_const(x::T, ::Val{C}) where {T, C}
         throw(DomainError("C must be > 0"))
     end
     # Calculate the magic number 2^N/C. Note that this is computed statically, not at runtime.
-    inverse_coeff, toshift = calculate_inverse_coeff(T, C)
+    inverse_coeff, toshift = calculate_inverse_coeff(narrow(T), C)
     # Compute the upper-half of widemul(x, 2^nbits(T)/C). We need to widen in case
     # of overflow, but widemul can be expensive without hardware support. `splitmul_upper`
     # will compute just the upper half of the result, without ever widening beyond T.
     # By keeping only the upper half, we're essentially dividing by 2^nbits(T), undoing the
     # numerator of the multiplication, so that the result is equal to x/C.
-    out = splitmul_upper(x, inverse_coeff)
+    out = x * inverse_coeff
     # This condition will be compiled away during specialization.
-    if T <: Signed
-        # Because our magic number has a leading one (since we shift all-the-way left), the
-        # result is negative if it's Signed. We add x to give us the positive equivalent.
-        out += x
-        signshift = (nbits(x) - 1)
-        isnegative = T(out >>> signshift)  # 1 if < 0 else 0 (Unsigned bitshift to read top bit)
-    end
+    #if T <: Signed
+    #    # Because our magic number has a leading one (since we shift all-the-way left), the
+    #    # result is negative if it's Signed. We add x to give us the positive equivalent.
+    #    out += x
+    #    signshift = (nbits(x) - 1)
+    #    isnegative = T(out >>> signshift)  # 1 if < 0 else 0 (Unsigned bitshift to read top bit)
+    #end
     # Undo the bitshifts used to calculate the invoeff magic number with maximum precision.
-    out = out >> toshift
-    if T <: Signed
-        out =  out + isnegative
-    end
+    out = out >>> toshift
+    #if T <: Signed
+    #    out =  out + isnegative
+    #end
     return T(out)
 end
 
@@ -131,13 +131,17 @@ Base.@pure function calculate_inverse_coeff(::Type{T}, C) where {T}
     # Note, also, that we calculate invceoff at double-precision so that the left-shift
     # doesn't leave trailing zeros. We truncate to only the upper-half before returning.
     UT = unsigned(T)
-    invcoeff = two_to_the_size_of(widen(UT)) ÷ C
-    toshift = _leading_zeros(invcoeff)
-    invcoeff = invcoeff << toshift
+    exp = nbits(T)-1
+    invcoeff = UT(2)^(exp) ÷ C
+    #toshift = (_leading_zeros(invcoeff)-1)
+    #invcoeff = invcoeff << toshift
+    toshift = exp
+
     # Now, truncate to only the upper half of invcoeff, after we've shifted. Instead of
     # bitshifting, we round to maintain precision. (This is needed to prevent off-by-ones.)
     # -- This is equivalent to `invcoeff = T(invcoeff >> sizeof(T))`, except rounded. --
-    invcoeff = _round_to_even(fldmod(invcoeff, typemax(UT))..., typemax(UT)) % T
+    #invcoeff = _round_to_even(fldmod(invcoeff, typemax(UT))..., typemax(UT)) % T
+    #@show invcoeff, toshift
     return invcoeff, toshift
 end
 # These are needed to handle Int128, which widens to BigInt, since BigInt doesn't have typemax
@@ -150,43 +154,6 @@ _leading_zeros(x) = leading_zeros(x)
 # passed here will fit in 256-bits (per two_to_the_size_of), we can pretend this is a
 # 256-bit integer, take just the upper half as a UInt128, and count the leading zeros there.
 _leading_zeros(x::BigInt) = leading_zeros((x >> 128) % UInt128)
-
-@inline function splitmul_upper(a::T, b::T) where T<:Signed
-    uresult = splitmul_upper(unsigned(a), unsigned(b))
-    return signed(uresult) - ((a < 0) ? b : 0) - ((b < 0) ? a : 0)
-end
-
-# Compute the upper half of the widened product of two unsigned integers.
-# We need the _widened_ product in case a*b would overflow, but widening can make
-# multiplication significantly more expensive if there isn't hardware support for the
-# widened result (eg `widemul(a::Int128, b::Int128)->BigInt)`. It is cheaper to emulate the
-# `widemul` by first splitting `a` and `b` into two halves, and then doing several smaller
-# multiplications and additions (like long-multiplication) to compute the result.
-#
-# Additionally, since in `div_by_const` the next step is to shift away the bottom half of
-# the result (effectively dividing by `2^nbits(T)`), we only need to compute the upper-half
-# of `widemul(a,b)`.
-#
-# To clarify, this function is equivalent to `(widemul(a,b) >> nbits(a))`.
-# Example: `widemul(0x0020,0x2002) == 0x0004_0040`,
-#          `unsigned_splitmul_upper(0x0020,0x2002) == 0x0004`
-#
-# This implemenation is based on umul32hi, from https://stackoverflow.com/a/22847373/751061
-@inline function splitmul_upper(a::T, b::T) where T<:Unsigned
-    # Split operands into halves
-    ah, al = splitint(a)
-    bh, bl = splitint(b)
-    halfT = typeof(ah)
-    halfbits = nbits(al)
-    # Compute partial products. Must use widemul because these could also overflow.
-    p0 = widemul(al, bl)  # Bottom two quarters
-    p1 = widemul(al, bh)  # Middle two quarters
-    p2 = widemul(ah, bl)  # Middle two quarters
-    p3 = widemul(ah, bh)  # Upper two quarters
-    # Sum partial products
-    carry = ((p0 >> halfbits) + (p1 % halfT) + (p2 % halfT)) >> halfbits
-    return p3 + (p2 >> halfbits) + (p1 >> halfbits) + carry
-end
 
 # Splits `x` into `(hi,lo)` and returns them as the corresponding narrowed type
 function splitint(x::T) where {T<:Integer}

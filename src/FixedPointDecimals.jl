@@ -495,4 +495,19 @@ value(fd::FD) = fd.i
 # for generic hashing
 decompose(fd::FD) = decompose(Rational(fd))
 
+function mul_simpleround(x::FD{T, f}, y::FD{T, f}) where {T, f}
+    powt = coefficient(FD{T, f})
+    reinterpret(FD{T, f}, fastround(widemul(x.i, y.i), powt))
+end
+@inline function fastround(v::T, powt) where T
+    point5 = powt÷2
+    if sizeof(T) <= sizeof(Int) || T <: BigInt
+        # For small-to-normal integers, LLVM can correctly optimize away the division.
+        (v+point5) ÷ powt
+    else
+        # For Int types larger than word-size, or non-standard Ts, LLVM doesn't optimize
+        # well, so we use a custom implementation of div.
+        div_by_const(v+point5, Val(powt))
+    end
+end
 end
