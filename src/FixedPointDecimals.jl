@@ -32,6 +32,8 @@ import Base: reinterpret, zero, one, abs, sign, ==, <, <=, +, -, /, *, div, rem,
              print, show, string, convert, parse, promote_rule, min, max,
              floatmin, floatmax, trunc, round, floor, ceil, eps, float, widemul, decompose
 
+using Suppressor
+
 const BitInteger = Union{Int8, UInt8, Int16, UInt16, Int32, UInt32, Int64,
                          UInt64, Int128, UInt128}
 
@@ -86,7 +88,10 @@ struct FixedDecimal{T <: Integer, f} <: Real
 
     # inner constructor
     # This function is marked as `Base.@pure`. It does not have or depend on any side-effects.
-    Base.@pure function Base.reinterpret(::Type{FixedDecimal{T, f}}, i::Integer) where {T, f}
+    function Base.reinterpret(::Type{FixedDecimal{T, f}}, i::Integer) where {T, f}
+        ## Note: TODO
+        _throw_if_unregistered_t(T)
+
         n = max_exp10(T)
         if f >= 0 && (n < 0 || f <= n)
             new{T, f}(i % T)
@@ -104,6 +109,28 @@ end
         "storage type $T: [0, $n]"
     ))
 end
+
+@noinline function _throw_if_unregistered_t(::Type{T}) where T
+    throw(ArgumentError(
+        "Attempted construction FixedDecimal{$T} w/ non-frozen type '$T'. This is unsafe " *
+        "and disallowed. To use $T in FixedDecimal, you must first freeze it via " *
+        "`register_and_freeze_int_type($T)`. NOTE: once you do this, you must not change" *
+        "any definitions for Base integer interface functions for that type (e.g. " *
+        "`typemax(::Type{T})`, `*(::T, ::T)`, etc.)"
+    ))
+end
+
+function register_and_freeze_int_type(::Type{T}) where T
+    # Remove ArgumentError for this type, because it is now safe to use.
+    @eval _throw_if_unregistered_t(::Type{$T}) = nothing
+
+    # Suppress the output to suppress the method overwritten errors
+    # Redefine all the base methods so that the `@pure` functions were defined _after_
+    # your changes to the method tables, and will not themselves depend on any mutable state
+    @suppress @eval begin
+
+# The rest of the implementation of FixedPointDecimals follows:
+# (unindented for readability)
 
 const FD = FixedDecimal
 
@@ -242,18 +269,6 @@ end
 
 _apply_exact_float(f, ::Type{T}, x::Real, i::Integer) where T = f(T, x, i)
 
-for fn in [:trunc, :floor, :ceil]
-    @eval ($fn(::Type{TI}, x::FD)::TI) where {TI <: Integer} = $fn(x)
-
-    # round/trunc/ceil/flooring to FD; generic
-    @eval function $fn(::Type{FD{T, f}}, x::Real) where {T, f}
-        powt = coefficient(FD{T, f})
-        # Use machine Float64 if possible, but fall back to BigFloat if we need
-        # more precision. 4f bits suffices.
-        val = _apply_exact_float($(Symbol(fn, "mul")), T, x, powt)
-        reinterpret(FD{T, f}, val)
-    end
-end
 function round(::Type{TI}, x::FD, ::RoundingMode{:Nearest}=RoundNearest) where {TI <: Integer}
     convert(TI, round(x))::TI
 end
@@ -297,14 +312,6 @@ function convert(::Type{FD{T, f}}, x::FD{U, g}) where {T, f, U, g}
     end
 end
 
-for remfn in [:rem, :mod, :mod1, :min, :max]
-    @eval $remfn(x::T, y::T) where {T <: FD} = reinterpret(T, $remfn(x.i, y.i))
-end
-for divfn in [:div, :fld, :fld1]
-    # div(x.i, y.i) eliminates the scaling coefficient, so we call the FD constructor.
-    # We don't need any widening logic, since we won't be multiplying by the coefficient.
-    @eval $divfn(x::T, y::T) where {T <: FD} = T($divfn(x.i, y.i))
-end
 
 convert(::Type{AbstractFloat}, x::FD) = convert(floattype(typeof(x)), x)
 function convert(::Type{TF}, x::FD{T, f}) where {TF <: AbstractFloat, T, f}
@@ -490,9 +497,6 @@ Base.@pure function max_exp10(::Type{T}) where {T <: Integer}
 end
 
 max_exp10(::Type{BigInt}) = -1
-# Freeze the evaluation for Int128, since max_exp10(Int128) is too compilicated to get
-# optimized away by the compiler during const-folding.
-@eval max_exp10(::Type{Int128}) = $(max_exp10(Int128))
 
 # coefficient is marked pure. This is needed to ensure that the result is always available
 # at compile time, and can therefore be used when optimizing mathematical operations.
@@ -509,4 +513,37 @@ value(fd::FD) = fd.i
 # for generic hashing
 decompose(fd::FD) = decompose(Rational(fd))
 
+    end  # @eval
+
+    @suppress for remfn in [:rem, :mod, :mod1, :min, :max]
+        @eval $remfn(x::T, y::T) where {T <: FD} = reinterpret(T, $remfn(x.i, y.i))
+    end
+    @suppress for divfn in [:div, :fld, :fld1]
+        # div(x.i, y.i) eliminates the scaling coefficient, so we call the FD constructor.
+        # We don't need any widening logic, since we won't be multiplying by the coefficient.
+        @eval $divfn(x::T, y::T) where {T <: FD} = T($divfn(x.i, y.i))
+    end
+    @suppress for fn in [:trunc, :floor, :ceil]
+        @eval ($fn(::Type{TI}, x::FD)::TI) where {TI <: Integer} = $fn(x)
+
+        # round/trunc/ceil/flooring to FD; generic
+        @eval function $fn(::Type{FD{T, f}}, x::Real) where {T, f}
+            powt = coefficient(FD{T, f})
+            # Use machine Float64 if possible, but fall back to BigFloat if we need
+            # more precision. 4f bits suffices.
+            val = _apply_exact_float($(Symbol(fn, "mul")), T, x, powt)
+            reinterpret(FD{T, f}, val)
+        end
+    end
+
+    # Freeze the evaluation for T, since max_exp10(Int128) is too compilicated to get
+    # optimized away by the compiler during const-folding.
+    @suppress @eval max_exp10(::Type{Int128}) = $(@eval max_exp10(Int128))
+
+end  # function register_and_freeze_int_type(T)
+
+for T in Base.BitInteger_types
+    @suppress register_and_freeze_int_type(T)
 end
+
+end  # module FixedPointDecimals

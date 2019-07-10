@@ -1025,4 +1025,8 @@ end
     end
 end
 
+@testset "Custom integer type" begin
+    include("custom_int_type.jl")
+end
+
 end  # global testset
